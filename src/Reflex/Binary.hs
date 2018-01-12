@@ -6,6 +6,7 @@
 module Reflex.Binary (
     CanEncode(..)
   , CanDecode(..)
+  , IncrementalDecoder(..)
   ) where
 
 import Data.ByteString (ByteString)
