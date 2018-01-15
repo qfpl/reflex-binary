@@ -10,12 +10,9 @@ module Reflex.Binary (
   , runIncrementalDecoder
   , CanDecode
   , getDecoder
-  , CanEncode
-  , doEncode
+  , CanEncode(..)
   )
 where
-
-import Data.Functor.Identity
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -39,20 +36,10 @@ runIncrementalDecoder onError onRx onStop onContinue decoder bs =
           onContinue $
             IncrementalDecoder c' stepRx
 
-class CanDecode' m b where
-  getDecoder :: IncrementalDecoder m b
+class CanDecode b where
+  getDecoder :: IncrementalDecoder IO b
 
-instance Monad m => CanDecode' m BS.ByteString where
-  getDecoder =
-    IncrementalDecoder () $ \_ onRx bs _ ->
-      onRx bs >> pure (Just ())
-
-instance Monad m => CanDecode' m LBS.ByteString where
-  getDecoder =
-    IncrementalDecoder () $ \_ onRx bs _ ->
-      (onRx . LBS.fromStrict) bs >> pure (Just ())
-
-instance (Monad m, Binary b) => CanDecode' m b where
+  default getDecoder :: Binary b => IncrementalDecoder IO b
   getDecoder =
     let
       initDecode =
@@ -74,24 +61,27 @@ instance (Monad m, Binary b) => CanDecode' m b where
     in
       IncrementalDecoder initDecode stepDecode
 
-type CanDecode b = CanDecode' IO b
+instance CanDecode BS.ByteString where
+  getDecoder =
+    IncrementalDecoder () $ \_ onRx bs _ ->
+      onRx bs >> pure (Just ())
 
-class CanEncode' m a where
-  doEncode' :: a -> m BS.ByteString
+instance CanDecode LBS.ByteString where
+  getDecoder =
+    IncrementalDecoder () $ \_ onRx bs _ ->
+      (onRx . LBS.fromStrict) bs >> pure (Just ())
 
-instance Monad m => CanEncode' m BS.ByteString where
-  doEncode' =
-    pure
+class CanEncode a where
+  doEncode :: a -> BS.ByteString
 
-instance Monad m => CanEncode' m LBS.ByteString where
-  doEncode' =
-    pure . LBS.toStrict
+  default doEncode :: Binary a => a -> BS.ByteString
+  doEncode =
+    LBS.toStrict . encode
 
-instance (Monad m, Binary a) => CanEncode' m a where
-  doEncode' =
-    pure . LBS.toStrict . encode
+instance CanEncode BS.ByteString where
+  doEncode =
+    id
 
-type CanEncode a = CanEncode' Identity a
-
-doEncode :: CanEncode a => a -> BS.ByteString
-doEncode = runIdentity . doEncode'
+instance CanEncode LBS.ByteString where
+  doEncode =
+    LBS.toStrict
