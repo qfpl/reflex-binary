@@ -1,13 +1,21 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ConstraintKinds #-}
 module Reflex.Binary (
-    CanEncode(..)
-  , CanDecode(..)
-  , IncrementalDecoder(..)
-  ) where
+    IncrementalDecoder(..)
+  , runIncrementalDecoder
+  , CanDecode
+  , getDecoder
+  , CanEncode
+  , doEncode
+  )
+where
+
+import Data.Functor.Identity
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -16,31 +24,38 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Binary
 import Data.Binary.Get
 
-class CanEncode a where
-  doEncode :: a -> ByteString
+data IncrementalDecoder m b where
+  IncrementalDecoder :: c -> ((String -> m ()) -> (b -> m ()) -> BS.ByteString -> c -> m (Maybe c)) -> IncrementalDecoder m b
 
-  default doEncode :: Binary a => a -> ByteString
-  doEncode = 
-    LBS.toStrict . encode
+runIncrementalDecoder :: Monad m => (String -> m ()) -> (a -> m ()) -> (() -> m ()) -> (IncrementalDecoder m a -> m ()) -> IncrementalDecoder m a -> ByteString -> m ()
+runIncrementalDecoder onError onRx onStop onContinue decoder bs =
+  case decoder of
+    IncrementalDecoder c stepRx -> do
+      mDecoder <- stepRx onError onRx bs c
+      case mDecoder of
+        Nothing ->
+          onStop ()
+        Just c' ->
+          onContinue $
+            IncrementalDecoder c' stepRx
 
-instance CanEncode BS.ByteString where
-  doEncode = 
-    id 
+class CanDecode' m b where
+  getDecoder :: IncrementalDecoder m b
 
-instance CanEncode LBS.ByteString where
-  doEncode = 
-    LBS.toStrict 
+instance Monad m => CanDecode' m BS.ByteString where
+  getDecoder =
+    IncrementalDecoder () $ \_ onRx bs _ ->
+      onRx bs >> pure (Just ())
 
-data IncrementalDecoder b where
-  IncrementalDecoder :: c -> ((String -> IO ()) -> (b -> IO ()) -> BS.ByteString -> c -> IO (Maybe c)) -> IncrementalDecoder b 
+instance Monad m => CanDecode' m LBS.ByteString where
+  getDecoder =
+    IncrementalDecoder () $ \_ onRx bs _ ->
+      (onRx . LBS.fromStrict) bs >> pure (Just ())
 
-class CanDecode b where
-  getDecoder :: IncrementalDecoder b
-
-  default getDecoder :: Binary b => IncrementalDecoder b
+instance (Monad m, Binary b) => CanDecode' m b where
   getDecoder =
     let
-      initDecode = 
+      initDecode =
         runGetIncremental (get :: Get b)
       handleDecode onError _ (Fail _ _ s) = do
         onError s
@@ -59,13 +74,24 @@ class CanDecode b where
     in
       IncrementalDecoder initDecode stepDecode
 
-instance CanDecode BS.ByteString where
-  getDecoder = 
-    IncrementalDecoder () $ \_ onRx bs _ -> 
-      onRx bs >> pure (Just ())
+type CanDecode b = CanDecode' IO b
 
-instance CanDecode LBS.ByteString where
-  getDecoder = 
-    IncrementalDecoder () $ \_ onRx bs _ -> 
-      (onRx . LBS.fromStrict) bs >> pure (Just ())
+class CanEncode' m a where
+  doEncode' :: a -> m BS.ByteString
 
+instance Monad m => CanEncode' m BS.ByteString where
+  doEncode' =
+    pure
+
+instance Monad m => CanEncode' m LBS.ByteString where
+  doEncode' =
+    pure . LBS.toStrict
+
+instance (Monad m, Binary a) => CanEncode' m a where
+  doEncode' =
+    pure . LBS.toStrict . encode
+
+type CanEncode a = CanEncode' Identity a
+
+doEncode :: CanEncode a => a -> BS.ByteString
+doEncode = runIdentity . doEncode'
