@@ -17,8 +17,8 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Reflex.Binary
-  build-depends:       base       >= 4.9  && < 4.12
-                     , binary     >= 0.8  && < 0.10
+  build-depends:       base       >= 4.9  && < 4.13
+                     , binary     >= 0.8  && < 0.11
                      , bytestring >= 0.10 && < 0.11
   hs-source-dirs:      src
   ghc-options:         -Wall
